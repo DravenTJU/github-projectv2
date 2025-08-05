@@ -1,0 +1,74 @@
+# GitHub ProjectV2 导入工具配置文件
+# 配置GitHub访问令牌和项目信息
+# 注意：此文件包含敏感信息，请勿提交到版本控制系统
+
+# GitHub配置
+github:
+  # GitHub Personal Access Token
+  # 可以从 https://github.com/settings/tokens 获取
+  # 需要 'project' 权限
+  token: "xxx"
+  
+  # 默认项目ID (可选，可以通过命令行参数覆盖)
+  # 使用GraphQL API获取: gh api graphql -f query='{viewer{projectsV2(first:10){nodes{id title}}}}'
+  default_project_id: "xxx"
+
+# API配置
+api:
+  # GraphQL API端点
+  endpoint: "https://api.github.com/graphql"
+  
+  # 请求超时时间（秒）
+  timeout: 30
+  
+  # 重试次数
+  max_retries: 3
+  
+  # 重试间隔（秒）
+  retry_delay: 1
+
+# 导入配置
+import:
+  # 批处理大小（一次处理多少个项目）
+  batch_size: 10
+  
+  # 批次间延迟（秒，避免API速率限制）
+  batch_delay: 1.0
+  
+  # 是否在错误时继续处理
+  continue_on_error: true
+  
+  # 默认内容类型
+  default_content_type: "draft"
+
+# 日志配置
+logging:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # 日志格式
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+  
+  # 时间格式
+  date_format: "%Y-%m-%d %H:%M:%S"
+  
+  # 日志文件路径（可选，留空则只输出到控制台）
+  file: ""
+
+# CSV文件配置
+csv:
+  # 默认编码
+  encoding: "utf-8"
+  
+  # 字段映射（CSV列名到项目字段的映射）
+  field_mapping:
+    # 项目字段名: CSV列名
+    "Status": "status"
+    "Priority": "priority"
+    "Estimate": "estimate"
+    "Milestone": "milestone"
+  
+  # 必需的CSV列
+  required_columns:
+    - "title"
+    - "content_type"
