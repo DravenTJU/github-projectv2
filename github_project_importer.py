@@ -47,6 +47,7 @@ class ProjectItem:
     status: Optional[str] = None
     priority: Optional[str] = None
     estimate: Optional[str] = None
+    size: Optional[str] = None
     repository: Optional[str] = None
     issue_number: Optional[int] = None
 
@@ -152,12 +153,24 @@ class GitHubProjectImporter:
     
     def create_draft_issue(self, item: ProjectItem) -> str:
         """在项目中创建草稿issue"""
+        # 首先获取assignee用户ID
+        assignee_ids = []
+        if item.assignees:
+            for assignee_login in item.assignees:
+                try:
+                    user_id = self.get_user_id(assignee_login)
+                    if user_id:
+                        assignee_ids.append(user_id)
+                except Exception as e:
+                    self.logger.warning(f"无法获取用户 {assignee_login} 的ID: {str(e)}")
+        
         mutation = """
-        mutation($projectId: ID!, $title: String!, $body: String) {
+        mutation($projectId: ID!, $title: String!, $body: String, $assigneeIds: [ID!]) {
             addProjectV2DraftIssue(input: {
                 projectId: $projectId,
                 title: $title,
-                body: $body
+                body: $body,
+                assigneeIds: $assigneeIds
             }) {
                 projectItem {
                     id
@@ -169,11 +182,36 @@ class GitHubProjectImporter:
         variables = {
             "projectId": self.project_id,
             "title": item.title,
-            "body": item.description or ""
+            "body": item.description or "",
+            "assigneeIds": assignee_ids
         }
         
         result = self.execute_graphql(mutation, variables)
         return result["addProjectV2DraftIssue"]["projectItem"]["id"]
+    
+    def get_user_id(self, username: str) -> Optional[str]:
+        """获取用户的GitHub节点ID"""
+        query = """
+        query($login: String!) {
+            user(login: $login) {
+                id
+            }
+        }
+        """
+        
+        variables = {"login": username}
+        
+        try:
+            result = self.execute_graphql(query, variables)
+            user_data = result.get("user")
+            if user_data:
+                return user_data["id"]
+            else:
+                self.logger.warning(f"未找到用户: {username}")
+                return None
+        except Exception as e:
+            self.logger.warning(f"获取用户 {username} 信息失败: {str(e)}")
+            return None
     
     def add_existing_item(self, content_id: str) -> str:
         """将现有的issue或PR添加到项目中"""
@@ -329,6 +367,7 @@ class GitHubProjectImporter:
             "status": item.status,
             "priority": item.priority,
             "estimate": item.estimate,
+            "size": item.size,
         }
         
         for field_name, field_value in field_updates.items():
@@ -393,6 +432,7 @@ def parse_csv_row(row: Dict[str, str]) -> ProjectItem:
         status=row.get("status"),
         priority=row.get("priority"),
         estimate=row.get("estimate"),
+        size=row.get("size"),
         repository=row.get("repository"),
         issue_number=issue_number
     )
