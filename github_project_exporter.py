@@ -29,6 +29,7 @@ class TaskInfo:
     id: str
     title: str
     content_type: str  # "Issue", "PullRequest", "DraftIssue"
+    description: Optional[str] = None
     status: Optional[str] = None
     priority: Optional[str] = None
     size: Optional[str] = None
@@ -43,6 +44,7 @@ class TaskInfo:
     updated_at: Optional[str] = None
     closed_at: Optional[str] = None
     state: Optional[str] = None
+    comments: List[Dict[str, Any]] = field(default_factory=list)
     custom_fields: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -203,6 +205,7 @@ class GitHubProjectExporter:
                                 ... on Issue {
                                     id
                                     title
+                                    body
                                     number
                                     url
                                     state
@@ -228,12 +231,27 @@ class GitHubProjectExporter:
                                         name
                                         owner {
                                             login
+                                        }
+                                    }
+                                    comments(first: 50, orderBy: {field: UPDATED_AT, direction: ASC}) {
+                                        nodes {
+                                            id
+                                            body
+                                            createdAt
+                                            updatedAt
+                                            author {
+                                                login
+                                                ... on User {
+                                                    name
+                                                }
+                                            }
                                         }
                                     }
                                 }
                                 ... on PullRequest {
                                     id
                                     title
+                                    body
                                     number
                                     url
                                     state
@@ -259,6 +277,20 @@ class GitHubProjectExporter:
                                         name
                                         owner {
                                             login
+                                        }
+                                    }
+                                    comments(first: 50, orderBy: {field: UPDATED_AT, direction: ASC}) {
+                                        nodes {
+                                            id
+                                            body
+                                            createdAt
+                                            updatedAt
+                                            author {
+                                                login
+                                                ... on User {
+                                                    name
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -338,6 +370,7 @@ class GitHubProjectExporter:
             id=item["id"],
             title=content.get("title", ""),
             content_type=content_type,
+            description=content.get("body", ""),
             number=content.get("number"),
             url=content.get("url"),
             created_at=content.get("createdAt"),
@@ -366,6 +399,24 @@ class GitHubProjectExporter:
             repo_name = repo_data.get("name", "")
             if owner and repo_name:
                 task.repository = f"{owner}/{repo_name}"
+        
+        # 处理comments
+        comments_data = content.get("comments", {}).get("nodes", [])
+        task.comments = []
+        for comment in comments_data:
+            if comment.get("body"):  # 只包含有内容的评论
+                author = comment.get("author", {})
+                comment_info = {
+                    "id": comment.get("id"),
+                    "body": comment.get("body"),
+                    "created_at": comment.get("createdAt"),
+                    "updated_at": comment.get("updatedAt"),
+                    "author": {
+                        "login": author.get("login", ""),
+                        "name": author.get("name", "")
+                    }
+                }
+                task.comments.append(comment_info)
         
         # 处理自定义字段
         field_values = item.get("fieldValues", {}).get("nodes", [])
@@ -464,9 +515,9 @@ def export_to_csv(tasks: List[TaskInfo], output_file: str):
     
     # 准备CSV字段
     fieldnames = [
-        'id', 'title', 'content_type', 'status', 'priority', 'size', 'estimate',
+        'id', 'title', 'content_type', 'description', 'status', 'priority', 'size', 'estimate',
         'assignees', 'labels', 'milestone', 'repository', 'number', 'url',
-        'created_at', 'updated_at', 'closed_at', 'state'
+        'created_at', 'updated_at', 'closed_at', 'state', 'comments_count'
     ]
     
     # 添加自定义字段
@@ -486,12 +537,16 @@ def export_to_csv(tasks: List[TaskInfo], output_file: str):
             row['assignees'] = ','.join(task.assignees)
             row['labels'] = ','.join(task.labels)
             
+            # 处理comments - 在CSV中只显示评论数量
+            row['comments_count'] = len(task.comments)
+            
             # 添加自定义字段
             for field_name in all_custom_fields:
                 row[field_name] = task.custom_fields.get(field_name, '')
             
-            # 移除custom_fields键
+            # 移除复杂字段
             row.pop('custom_fields', None)
+            row.pop('comments', None)  # CSV中不包含完整的评论内容
             
             writer.writerow(row)
 
@@ -549,6 +604,34 @@ def print_summary(tasks: List[TaskInfo]):
         print(f"\n按负责人统计:")
         for assignee, count in sorted(assignee_counts.items(), key=lambda x: x[1], reverse=True):
             print(f"  {assignee}: {count}")
+    
+    # 按评论数统计
+    comment_stats = {}
+    total_comments = 0
+    for task in tasks:
+        comment_count = len(task.comments)
+        total_comments += comment_count
+        if comment_count == 0:
+            comment_stats["无评论"] = comment_stats.get("无评论", 0) + 1
+        elif comment_count <= 5:
+            comment_stats["1-5条评论"] = comment_stats.get("1-5条评论", 0) + 1
+        elif comment_count <= 10:
+            comment_stats["6-10条评论"] = comment_stats.get("6-10条评论", 0) + 1
+        else:
+            comment_stats["10条以上评论"] = comment_stats.get("10条以上评论", 0) + 1
+    
+    if total_comments > 0:
+        print(f"\n评论统计:")
+        print(f"  总评论数: {total_comments}")
+        print(f"  平均每个任务: {total_comments / len(tasks):.1f} 条评论")
+        for stat, count in comment_stats.items():
+            print(f"  {stat}: {count}")
+    
+    # 显示有描述的任务数量
+    tasks_with_desc = sum(1 for task in tasks if task.description and task.description.strip())
+    print(f"\n内容统计:")
+    print(f"  有描述的任务: {tasks_with_desc}/{len(tasks)} ({tasks_with_desc/len(tasks)*100:.1f}%)")
+    print(f"  有评论的任务: {len(tasks) - comment_stats.get('无评论', 0)}/{len(tasks)} ({(len(tasks) - comment_stats.get('无评论', 0))/len(tasks)*100:.1f}%)")
 
 
 def main():
